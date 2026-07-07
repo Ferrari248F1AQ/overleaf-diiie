@@ -1,0 +1,95 @@
+# =============================================================================
+#  Build Overleaf CEP "app" image per arm64 (Raspberry Pi 5)
+# =============================================================================
+# Cosa fa:
+#   Compila l'immagine applicativa Overleaf (Node/web/clsi/ecc.) sopra la base
+#   arm64 pubblicata da build-base-arm64.yml, e la pubblica sul tuo Docker Hub
+#   come <DOCKER_USERNAME>/overleaf-cep-arm64:<versione> e :latest.
+#
+#   Esegui SEMPRE prima build-base-arm64.yml almeno una volta.
+#   Questa gira in ~10-20 minuti su runner arm64 nativi.
+#
+# Setup richiesto: stessi secrets DOCKER_USERNAME / DOCKER_PASSWORD di
+#   build-base-arm64.yml (li riusa).
+#
+# Uso:
+#   Actions -> "Build Overleaf CEP app image (arm64)" -> Run workflow
+#   Puoi lasciare "upstream_tag" vuoto per prendere l'ultima versione
+#   taggata del progetto, oppure indicarne una specifica (es. 6.1.2-ext-v4.1)
+#   se vuoi restare allineato a quanto avevi su Windows.
+#
+# Al termine avrai pubblicato: docker.io/<DOCKER_USERNAME>/overleaf-cep-arm64:latest
+# =============================================================================
+
+name: Build Overleaf CEP app image (arm64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: 'Tag di yu-i-i/overleaf-cep da compilare (vuoto = ultimo tag disponibile)'
+        required: false
+        default: ''
+  schedule:
+    - cron: '0 4 * * 1'   # ogni lunedi
+
+jobs:
+  build-app:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout overleaf-cep (ext-ce)
+        uses: actions/checkout@v4
+        with:
+          repository: yu-i-i/overleaf-cep
+          ref: ext-ce
+          path: overleaf
+          fetch-depth: 0
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determina il tag da compilare
+        id: meta
+        working-directory: overleaf
+        run: |
+          if [ -n "${{ github.event.inputs.upstream_tag }}" ]; then
+            TAG="${{ github.event.inputs.upstream_tag }}"
+          else
+            git fetch --tags
+            TAG=$(git tag --sort=-v:refname | head -n 1)
+          fi
+          if [ -z "$TAG" ]; then
+            echo "Nessun tag trovato, uso HEAD di ext-ce"
+            TAG="no-tag"
+          fi
+          echo "Versione selezionata: $TAG"
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout del tag selezionato
+        if: steps.meta.outputs.version != 'no-tag'
+        working-directory: overleaf
+        run: git checkout ${{ steps.meta.outputs.version }}
+
+      - name: Punta il Dockerfile alla nostra base arm64
+        working-directory: overleaf
+        run: |
+          sed -i "s|sharelatex/sharelatex-base[^ ]*|${{ secrets.DOCKER_USERNAME }}/overleaf-base-arm64:latest|g" server-ce/Dockerfile
+
+      - name: Build and push app image (arm64)
+        working-directory: overleaf
+        run: |
+          TAGS="--tag ${{ secrets.DOCKER_USERNAME }}/overleaf-cep-arm64:latest"
+          if [ "${{ steps.meta.outputs.version }}" != "no-tag" ]; then
+            TAGS="$TAGS --tag ${{ secrets.DOCKER_USERNAME }}/overleaf-cep-arm64:${{ steps.meta.outputs.version }}"
+          fi
+          docker buildx build \
+            --platform linux/arm64 \
+            --file server-ce/Dockerfile \
+            $TAGS \
+            --push .
