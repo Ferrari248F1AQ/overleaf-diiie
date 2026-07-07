@@ -12,11 +12,31 @@
 # Setup richiesto: stessi secrets DOCKER_USERNAME / DOCKER_PASSWORD di
 #   build-base-arm64.yml (li riusa).
 #
+# Questo workflow applica anche la patch custom UNIVAQ DIIIE "purge progetti
+# vecchi" (pannello Admin) definita in patches/overleaf-admin-purge/, PRIMA
+# di buildare l'immagine. Per questo, a differenza di build-base-arm64.yml,
+# questo file richiede che nel TUO repository GitHub (quello dove hai messo
+# questo workflow) esista anche la cartella:
+#   patches/overleaf-admin-purge/PurgeOldProjectsController.js
+#   patches/overleaf-admin-purge/purge-old-projects.pug
+#   patches/overleaf-admin-purge/apply-patch.py
+# (copiala da raspberrypi/patches/overleaf-admin-purge/ di questo progetto).
+# Se lo step "Applica patch UNIVAQ DIIIE" fallisce, la build si interrompe
+# (exit code diverso da 0): leggi l'errore nel log, indica esattamente quale
+# file e quale testo non e' stato trovato — vedi README.md, sezione sul
+# purge dei progetti vecchi, per come risolvere.
+#
 # Uso:
 #   Actions -> "Build Overleaf CEP app image (arm64)" -> Run workflow
-#   Puoi lasciare "upstream_tag" vuoto per prendere l'ultima versione
-#   taggata del progetto, oppure indicarne una specifica (es. 6.1.2-ext-v4.1)
-#   se vuoi restare allineato a quanto avevi su Windows.
+#   - upstream_repo: di norma lascia vuoto (= yu-i-i/overleaf-cep, il fork con
+#     le patch extra). Per versioni non presenti nel fork (es. 5.5.7, richiesta
+#     dalla migrazione binary-files) metti "overleaf/overleaf" (repo ufficiale).
+#   - upstream_tag: vuoto = ultima versione taggata, oppure una specifica
+#     (es. 6.1.2-ext-v4.1 sul fork, o 5.5.7 sul repo ufficiale).
+#   - apply_patch: lascia "true" per build normali. Metti "false" quando usi
+#     upstream_repo=overleaf/overleaf per una versione intermedia come 5.5.7:
+#     e' un'immagine temporanea solo per la migrazione, non serve la patch
+#     admin, e gli anchor della patch potrebbero non esistere in quel tag.
 #
 # Al termine avrai pubblicato: docker.io/<DOCKER_USERNAME>/overleaf-cep-arm64:latest
 # =============================================================================
@@ -26,10 +46,18 @@ name: Build Overleaf CEP app image (arm64)
 on:
   workflow_dispatch:
     inputs:
+      upstream_repo:
+        description: 'Repository GitHub da compilare (default: il fork esteso)'
+        required: false
+        default: 'yu-i-i/overleaf-cep'
       upstream_tag:
-        description: 'Tag di yu-i-i/overleaf-cep da compilare (vuoto = ultimo tag disponibile)'
+        description: 'Tag da compilare (vuoto = ultimo tag disponibile sul repo scelto). Per versioni non presenti nel fork (es. 5.5.7, richiesta per la migrazione binary-files) usa upstream_repo=overleaf/overleaf'
         required: false
         default: ''
+      apply_patch:
+        description: 'Applica la patch UNIVAQ DIIIE "purge progetti vecchi"? Metti false per build di versioni vecchie/intermedie dove la patch potrebbe non applicarsi'
+        required: false
+        default: 'true'
   schedule:
     - cron: '0 4 * * 1'   # ogni lunedi
 
@@ -37,11 +65,16 @@ jobs:
   build-app:
     runs-on: ubuntu-24.04-arm
     steps:
-      - name: Checkout overleaf-cep (ext-ce)
+      - name: Checkout di questo repository (patch UNIVAQ DIIIE)
+        uses: actions/checkout@v4
+        # nessun "repository:"/"path:" esplicito => scarica il repo dove
+        # vive questo workflow, nella working directory di default
+
+      - name: Checkout sorgente Overleaf (fork o ufficiale)
         uses: actions/checkout@v4
         with:
-          repository: yu-i-i/overleaf-cep
-          ref: ext-ce
+          repository: ${{ github.event.inputs.upstream_repo || 'yu-i-i/overleaf-cep' }}
+          ref: ${{ (github.event.inputs.upstream_repo || 'yu-i-i/overleaf-cep') == 'yu-i-i/overleaf-cep' && 'ext-ce' || 'main' }}
           path: overleaf
           fetch-depth: 0
 
@@ -76,10 +109,24 @@ jobs:
         working-directory: overleaf
         run: git checkout ${{ steps.meta.outputs.version }}
 
+      - name: Applica patch UNIVAQ DIIIE (purge progetti vecchi, pannello Admin)
+        if: github.event.inputs.apply_patch != 'false'
+        run: python3 patches/overleaf-admin-purge/apply-patch.py overleaf
+
       - name: Punta il Dockerfile alla nostra base arm64
         working-directory: overleaf
         run: |
+          if ! grep -q "sharelatex/sharelatex-base" server-ce/Dockerfile; then
+            echo "ERRORE: server-ce/Dockerfile di questo tag/repo non contiene piu' (o non ha mai contenuto)"
+            echo "la riga 'FROM sharelatex/sharelatex-base...' che questo step sostituisce con la nostra"
+            echo "base arm64. Probabilmente questo tag usa un nome/formato di immagine base diverso:"
+            echo "controlla server-ce/Dockerfile manualmente e aggiorna il pattern sed qui sotto."
+            grep -n "^FROM" server-ce/Dockerfile || true
+            exit 1
+          fi
           sed -i "s|sharelatex/sharelatex-base[^ ]*|${{ secrets.DOCKER_USERNAME }}/overleaf-base-arm64:latest|g" server-ce/Dockerfile
+          echo "Dockerfile aggiornato:"
+          grep -n "^FROM" server-ce/Dockerfile
 
       - name: Build and push app image (arm64)
         working-directory: overleaf
