@@ -8,7 +8,7 @@ mano per testare in locale su un checkout del sorgente.
 
 Cosa fa:
   1. Copia due file NUOVI (nessuna sovrascrittura di file esistenti):
-       PurgeOldProjectsController.js -> services/web/app/src/Features/ServerAdmin/
+       PurgeOldProjectsController.mjs -> services/web/app/src/Features/ServerAdmin/
        purge-old-projects.pug        -> services/web/app/views/admin/
   2. Inserisce, in modo ancorato a testo letterale, 3 piccole modifiche in
      file esistenti:
@@ -47,8 +47,8 @@ def write(path: Path, content: str) -> None:
 
 def copy_new_files(root: Path) -> None:
     targets = {
-        "PurgeOldProjectsController.js": root
-        / "services/web/app/src/Features/ServerAdmin/PurgeOldProjectsController.js",
+        "PurgeOldProjectsController.mjs": root
+        / "services/web/app/src/Features/ServerAdmin/PurgeOldProjectsController.mjs",
         "purge-old-projects.pug": root
         / "services/web/app/views/admin/purge-old-projects.pug",
     }
@@ -66,14 +66,14 @@ def patch_router(root: Path) -> None:
     content = read(path)
 
     import_anchor = (
-        "import AdminController from './Features/ServerAdmin/AdminController.js'"
+        "import AdminController from './Features/ServerAdmin/AdminController.mjs'"
     )
     if import_anchor not in content:
         raise AnchorNotFound(f"router.mjs: import di AdminController non trovato (atteso: {import_anchor!r})")
 
     new_import = (
         "import PurgeOldProjectsController from "
-        "'./Features/ServerAdmin/PurgeOldProjectsController.js'"
+        "'./Features/ServerAdmin/PurgeOldProjectsController.mjs'"
     )
     if new_import not in content:
         content = content.replace(
