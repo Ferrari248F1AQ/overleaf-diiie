@@ -1,0 +1,91 @@
+extends ../layout-marketing
+
+block content
+	.content.content-alt#main-content
+		.container
+			.row
+				.col-sm-12
+					.card
+						.card-body
+							.page-header
+								h1 Purge progetti vecchi
+							p
+								a(href='/admin') ← Torna al pannello Admin
+
+							p.small
+								| Cancella (o sposta nel cestino) tutti i progetti la cui ultima modifica ("lastUpdated") e' precedente alla data indicata, per liberare spazio. Flusso in due passi: prima un'anteprima (nessuna modifica), poi una conferma esplicita per eseguire davvero.
+
+							if purgeError
+								.alert.alert-danger= purgeError
+
+							if purgeResult
+								.alert.alert-success
+									| Operazione completata: #{purgeResult.deleted.length} progetti #{purgeResult.hardDelete ? "cancellati definitivamente" : "spostati nel cestino (recuperabili 90 giorni)"}.
+									if purgeResult.failed.length
+										|  #{purgeResult.failed.length} falliti, vedi dettagli sotto e i log del container.
+
+								if purgeResult.failed.length
+									h4 Progetti falliti
+									table.table.table-condensed
+										thead
+											tr
+												th ID
+												th Nome
+												th Errore
+										tbody
+											each f in purgeResult.failed
+												tr
+													td= f.id
+													td= f.name
+													td= f.error
+
+							else if purgePreview
+								p
+									strong= purgePreview.count
+									|  progetti trovati con ultima modifica prima del #{purgePreview.cutoffDateStr}.
+									if purgePreview.truncated
+										|  Anteprima limitata alle prime 500 righe (l'operazione reale li includera' tutti).
+
+								if purgePreview.count > 0
+									.table-responsive
+										table.table.table-condensed
+											thead
+												tr
+													th Nome
+													th Proprietario
+													th Ultima modifica
+											tbody
+												each row in purgePreview.rows
+													tr
+														td= row.name
+														td= row.ownerEmail
+														td= row.lastUpdated
+
+									form(method='post', action='/admin/purgeOldProjects/execute')
+										input(name="_csrf", type="hidden", value=csrfToken)
+										input(type="hidden", name="cutoff_date", value=purgePreview.cutoffDateStr)
+										input(type="hidden", name="expected_count", value=purgePreview.count)
+										if purgePreview.hardDelete
+											input(type="hidden", name="hard_delete", value="on")
+										.form-group
+											label.form-label(for="confirmation_text") Scrivi CONFERMA (tutto maiuscolo) per procedere
+											input.form-control(name="confirmation_text", type="text", placeholder="CONFERMA", required, autocomplete="off")
+										button.btn.btn-danger(type="submit")
+											if purgePreview.hardDelete
+												| Cancella definitivamente #{purgePreview.count} progetti
+											else
+												| Sposta nel cestino #{purgePreview.count} progetti
+
+							hr
+							h3 Nuova anteprima
+							form(method='post', action='/admin/purgeOldProjects/preview')
+								input(name="_csrf", type="hidden", value=csrfToken)
+								.form-group
+									label.form-label(for="cutoff_date") Data limite
+									input.form-control(type="date", name="cutoff_date", required)
+									p.small Verranno trovati i progetti con ultima modifica precedente a questa data.
+								.checkbox
+									label
+										input(type="checkbox", name="hard_delete")
+										|  Cancellazione definitiva immediata (libera spazio subito, NON recuperabile). Se lasci deselezionato, i progetti vengono solo spostati nel cestino, recuperabili per 90 giorni come da comportamento standard di Overleaf.
+								button.btn.btn-primary(type="submit") Anteprima (nessuna modifica)
